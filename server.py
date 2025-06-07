@@ -5,7 +5,7 @@ import json
 
 
 HOST = '0.0.0.0' # any machine on same network can join '127.0.0.1' for only my machine
-PORT = 7776
+PORT = 7777
 
 # standard block setup
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # af_inet -> IPv4 | sock_stream -> TCP
@@ -77,7 +77,7 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
     print(f"[NEW CONNECTION] {addr} connected as Player {player_id} with Game ID {game_id}.")
     send_packet(conn, player_id % 2)# sending player id to client who just connected (which is conn)
 
-
+    user_id = player_id % 2
     while True:
         # print(games)
         try: # waiting to receive data from client
@@ -86,43 +86,51 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
             
             if msg == "READY":
                 with lock:
-                    games[game_id]["start"][player_id % 2] = 1
+                    games[game_id]["start"][user_id] = 1
             elif msg == "HI":
                 with lock:
                     print("hellooooo")
             
             elif msg == "INCOMING":
                 with lock:
-                    for i in range(len(games[game_id][player_id % 2]["incoming"])):
-                        games[game_id][player_id % 2]["incoming"][i][1] += 2
+                    for i in range(len(games[game_id][user_id]["incoming"])):
+                        games[game_id][user_id]["incoming"][i][1] += 2
             
             elif msg == "OUTGOING":
                 with lock:
-                    for i in range(len(games[game_id][player_id % 2]["incoming"])):
-                        games[game_id][player_id % 2]["incoming"][i][2] -= 2
+                    for i in range(len(games[game_id][user_id]["incoming"])):
+                        games[game_id][user_id]["incoming"][i][2] -= 2
+                
+            elif msg == "MODE": # switch modes
+                with lock:
+                    games[game_id][user_id]["mode"] = not games[game_id][user_id]["mode"]
             
 
             elif isinstance(msg, tuple):
                 with lock:
-                    games[game_id][player_id % 2]["health"] -= msg[0] * msg[1] # multiplier * damage
-                    games[game_id][player_id % 2]["incoming"].pop(0)
+                    games[game_id][user_id]["health"] -= msg[0] * msg[1] # multiplier * damage
+                    games[game_id][user_id]["incoming"].pop(0)
             
 
-
-
-            elif msg == True: # delete
+            elif msg == "DEFEND": # receive words
                 with lock:
-                    games[game_id][player_id % 2]["buffer"] = games[game_id][player_id % 2]["buffer"][1:]
-                    if games[game_id][player_id % 2]["buffer"] == "": # buffer is empty
+                    games[game_id][user_id]["incoming"][0][0] = games[game_id][user_id]["incoming"][0][0][1:]
+                    if games[game_id][user_id]["incoming"][0][0] == "": # empty
+                        games[game_id][user_id]["incoming"].pop(0)
 
-                        popped = games[game_id][player_id % 2]["text"].pop(0) # remove last element in text
-                        games[game_id][not (player_id % 2)]["incoming"].append([popped, 22, 550]) # pass first element to incoming for opponent [word, top right]
+            elif msg == "ATTACK": # send words
+                with lock:
+                    games[game_id][user_id]["buffer"] = games[game_id][user_id]["buffer"][1:]
+                    if games[game_id][user_id]["buffer"] == "": # buffer is empty
+
+                        popped = games[game_id][user_id]["text"].pop(0) # remove last element in text
+                        games[game_id][not (user_id)]["incoming"].append([popped, 22, 550]) # pass first element to incoming for opponent [word, top right]
                         
                         # set next buffer
-                        games[game_id][player_id % 2]["buffer"] = games[game_id][player_id % 2]["text"][0] 
+                        games[game_id][user_id]["buffer"] = games[game_id][user_id]["text"][0] 
 
                         # set next peek
-                        games[game_id][player_id % 2]["peek"] = games[game_id][player_id % 2]["text"][1] # set peek again
+                        games[game_id][user_id]["peek"] = games[game_id][user_id]["text"][1] # set peek again
 
             broadcast_state(game_id) # after updates, send full game state to every connected client
 
@@ -160,7 +168,8 @@ def main():
                 "buffer" : book_tokens[0],
                 "peek" : book_tokens[1],
                 "incoming" : [],
-                "health" : 500
+                "health" : 500,
+                "mode" : 1 # 1 -> attack | 0 -> defend
             },
 
             1 : {
@@ -168,7 +177,8 @@ def main():
                 "buffer" : book_tokens[0],
                 "peek" : book_tokens[1],
                 "incoming" : [],
-                "health" : 500
+                "health" : 500,
+                "mode" : 1
             },
             
             "start" : [0, 0], # bits representing ready or not

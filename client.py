@@ -10,6 +10,17 @@ VEL = 5
 MAX_FPS = 60
 DAMAGE = 40
 
+# if mode on words
+FOCUS_COLOR = (255, 99, 99)
+UNFOCUS_COLOR = (255, 160, 150)
+
+
+BACKGROUND_COLOR = (239, 228, 210)
+
+
+OPP_FOCUS_COLOR = (58, 89, 209)
+OPP_UNFOCUS_COLOR = (122, 198, 210)
+
 
 
 
@@ -17,7 +28,7 @@ DAMAGE = 40
 hostname = socket.gethostname()
 local_ip = socket.gethostbyname(hostname)
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client.connect((local_ip, 7776))
+client.connect((local_ip, 7777))
 
 
 lock = threading.Lock()
@@ -32,49 +43,26 @@ font = pygame.font.Font('mc.otf', 28)
 # font = pygame.font.SysFont(None, 48)
 clock = pygame.time.Clock()
 
-player_id = None
+player_id = None # player_id from server | 0 ... N
+client_id = None # player_id in the game on client | 0 or 1
 
-# data to manipulate and send
-my_text = None
+# simplified variables
+buffer = None
+buffer_def = None
+mode = None
+mode_opp = None
 
 # shared data
 players = {}
 game = None
 
-key_map = {
-    pygame.K_a: 'a',
-    pygame.K_b: 'b',
-    pygame.K_c: 'c',
-    pygame.K_d: 'd',
-    pygame.K_e: 'e',
-    pygame.K_f: 'f',
-    pygame.K_g: 'g',
-    pygame.K_h: 'h',
-    pygame.K_i: 'i',
-    pygame.K_j: 'j',
-    pygame.K_k: 'k',
-    pygame.K_l: 'l',
-    pygame.K_m: 'm',
-    pygame.K_n: 'n',
-    pygame.K_o: 'o',
-    pygame.K_p: 'p',
-    pygame.K_q: 'q',
-    pygame.K_r: 'r',
-    pygame.K_s: 's',
-    pygame.K_t: 't',
-    pygame.K_u: 'u',
-    pygame.K_v: 'v',
-    pygame.K_w: 'w',
-    pygame.K_x: 'x',
-    pygame.K_y: 'y',
-    pygame.K_z: 'z',
-}
-
-
 def send_packet(conn, obj):
-    data = pickle.dumps(obj)
-    header = len(data).to_bytes(4, 'big')
-    conn.sendall(header + data)
+    try:
+        data = pickle.dumps(obj)
+        header = len(data).to_bytes(4, 'big')
+        conn.sendall(header + data)
+    except:
+        raise ConnectionError("Could not send data")
 
 def recv_exact(conn, n):
     data = b'' # bytes
@@ -86,9 +74,15 @@ def recv_exact(conn, n):
 
     return data
 
+def recv_next_block(conn):
+    header = recv_exact(conn, 4)
+    total_len = int.from_bytes(header, 'big')
+    data = recv_exact(conn, total_len)
+    loaded_data = pickle.loads(data)
+    return loaded_data
 
 def receive_state():
-    global game, my_text
+    global game, mode, mode_opp, buffer, buffer_def
     while True:
         # print("receiving...")
         try:
@@ -97,32 +91,32 @@ def receive_state():
             
             with lock:
                 game = loaded_game
-                my_text = game[player_id % 2]["buffer"]
+                buffer = game[player_id % 2]["buffer"]
+                buffer_def = game[player_id % 2]["incoming"][0][0] if len(game[player_id % 2]["incoming"]) > 0 else None
+                mode = game[player_id % 2]["mode"]
+
+                mode_opp = game[not player_id % 2]["mode"]
 
         except Exception as e:
             print("receive_state error:", e)
             break
 
 
-def recv_next_block(conn):
-    header = recv_exact(conn, 4)
-    total_len = int.from_bytes(header, 'big')
-    data = recv_exact(conn, total_len)
-    loaded_data = pickle.loads(data)
-    return loaded_data
+
 
 
 def main():
-    global player_id
+    global player_id, client_id
 
     player_id = recv_next_block(client)
+    # client_id = player_id % 2
     print(f"Connected as Player {player_id}")
 
     threading.Thread(target=receive_state, daemon=True).start()
 
     send_packet(client, "READY") # triggers the server
     
-    while game is None or my_text is None: # make sure that we have everything before we start the game
+    while game is None or buffer is None: # make sure that we have everything before we start the game
         print("Waiting for game")
 
 
@@ -136,37 +130,44 @@ def main():
             if event.type == pygame.QUIT:
                 run = False
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_SPACE:
+                if event.key == pygame.K_RETURN:
                     try:
-                        # client.sendall(pickle.dumps("READY"))
-                        pass # TODO
+                        send_packet(client, "MODE")
                     except:
-                        pass # feature in the game and okay if it doesnt work so dont break
+                        pass
                     
 
                 
 
         keys = pygame.key.get_pressed()
         character = clicked(keys)
-        match = False
-        if character == my_text[0]: # clicked the right key
-            match = True
+
+
+        # offense
+        if mode == 1 and character == buffer[0]: # clicked the matching key
+            # update matched character
+            send_packet(client, "ATTACK")
+
+        # defense
+        if buffer_def is not None:
+            print(buffer_def)
+        if mode == 0 and buffer_def is not None and character == buffer_def[0]:
+            send_packet(client, "DEFEND")
+        
 
 
         if len(game[player_id % 2]["incoming"]) > 0 and game[player_id % 2]["incoming"][0][1] > 600:
-            send_packet(client, (1, DAMAGE)) # if passes your side deal (multiplier * damage)
+            # if passes your side deal (multiplier * damage)
+            send_packet(client, (1, DAMAGE)) 
 
-
-        try:
-            send_packet(client, match)
-        except:
-            break # client disconnected
+            
         
         # update floating words
         send_packet(client, "INCOMING")
         send_packet(client, "OUTGOING")
         
 
+        # once both players ready, get off waiting screen
         draw_window() if game["start"][0] and game["start"][1] else waiting_screen()
 
     
@@ -179,7 +180,7 @@ def main():
 
 def draw_window():
     # print(game)
-    window.fill((255, 255, 255))
+    window.fill(BACKGROUND_COLOR)
 
     # me
     draw_user()
@@ -198,22 +199,19 @@ def draw_user():
 
 
     # BUFFER WORD PLACED BOTTOM LEFT
-    buffer = font.render(my_text, True, (0, 0, 0))
-    window.blit(buffer, (x_word, y_word))
+    text = font.render(buffer, True, FOCUS_COLOR if mode else UNFOCUS_COLOR)
+    window.blit(text, (x_word, y_word))
 
     # PEEK WORD PLACED AT MIDDLE BOTTOM
-    peek = font.render(game[player_id % 2]["peek"], True, (0, 0, 0))
-    window.blit(peek, (250, HEIGHT // 2 + HEIGHT // 4))
+    peek = font.render(game[player_id % 2]["peek"], True, FOCUS_COLOR if mode else UNFOCUS_COLOR)
+    window.blit(peek, (250, HEIGHT // 2 + HEIGHT // 6))
 
     # INCOMING WORDS TOP RIGHT
     for buf, y, z in game[player_id % 2]["incoming"]:
-        inc_buf = font.render(buf, True, (0, 0, 0))
+        inc_buf = font.render(buf, True, FOCUS_COLOR if (not mode) else UNFOCUS_COLOR)
         window.blit(inc_buf, (475, y))
 
-    # OUTGOING WORDS BOTTOM LEFT
-    for buf, y, z in game[not player_id % 2]["incoming"]:
-        out_buf = font.render(buf, True, (0, 0, 0))
-        window.blit(out_buf, (50, z))
+
 
 
     
@@ -223,12 +221,17 @@ def draw_opp():
     y_word = 50
 
     # OPP BUFFER ON THE TOP RIGHT
-    text = font.render(game[not player_id % 2]["buffer"], True, (0, 0, 0))
+    text = font.render(game[not player_id % 2]["buffer"], True, OPP_FOCUS_COLOR if mode_opp else OPP_UNFOCUS_COLOR)
     window.blit(text, (x_word, y_word - text.get_height()))
 
     # PEEK WORD PLACED AT MIDDLE TOP
-    peek = font.render(game[not player_id % 2]["peek"], True, (0, 0, 0))
+    peek = font.render(game[not player_id % 2]["peek"], True, OPP_FOCUS_COLOR if mode_opp else OPP_UNFOCUS_COLOR)
     window.blit(peek, (250, HEIGHT // 4))
+
+    # OUTGOING WORDS BOTTOM LEFT
+    for buf, y, z in game[not player_id % 2]["incoming"]:
+        out_buf = font.render(buf, True, OPP_FOCUS_COLOR if (not mode_opp) else OPP_UNFOCUS_COLOR)
+        window.blit(out_buf, (50, z))
 
 def draw_health_bars():
     pass
@@ -248,11 +251,10 @@ def waiting_screen():
 
         
 def clicked(keys):
-    for k in key_map:
-        if keys[k]:
-            return key_map[k]
-    return None
-
+    for i in range(pygame.K_a, pygame.K_z + 1):
+        if keys[i]:
+            return chr(i)
+    return None # didn't click anything
 
 
 if __name__ == "__main__":
