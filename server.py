@@ -1,10 +1,11 @@
 import socket
 import threading
 import pickle
+import json
 
 
 HOST = '0.0.0.0' # any machine on same network can join '127.0.0.1' for only my machine
-PORT = 7778
+PORT = 7776
 
 # standard block setup
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # af_inet -> IPv4 | sock_stream -> TCP
@@ -17,11 +18,15 @@ clients = {} # player_id -> client socket
 games = {} # game_id -> game
 # game -> {0: ["hello", "world"], 1: ["hello", "world"]}
 
-library = {
-    "startup" : ["hello", "world"]
-}
+library = {}
+book = "harry-potter"
+book_tokens = []
 
-book = "startup"
+with open("library.json", "r") as f:
+    library = json.load(f)
+    book_tokens = library[book]
+
+
 
 counter = 0 # shared counter
 lock = threading.Lock() # lock to prevent race conditions
@@ -85,13 +90,39 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
             elif msg == "HI":
                 with lock:
                     print("hellooooo")
+            
+            elif msg == "INCOMING":
+                with lock:
+                    for i in range(len(games[game_id][player_id % 2]["incoming"])):
+                        games[game_id][player_id % 2]["incoming"][i][1] += 2
+            
+            elif msg == "OUTGOING":
+                with lock:
+                    for i in range(len(games[game_id][player_id % 2]["incoming"])):
+                        games[game_id][player_id % 2]["incoming"][i][2] -= 2
+            
+
+            elif isinstance(msg, tuple):
+                with lock:
+                    games[game_id][player_id % 2]["health"] -= msg[0] * msg[1] # multiplier * damage
+                    games[game_id][player_id % 2]["incoming"].pop(0)
+            
+
+
+
             elif msg == True: # delete
                 with lock:
                     games[game_id][player_id % 2]["buffer"] = games[game_id][player_id % 2]["buffer"][1:]
                     if games[game_id][player_id % 2]["buffer"] == "": # buffer is empty
-                        popped = games[game_id][player_id % 2]["text"].pop() # remove last element in text
-                        games[game_id][not (player_id % 2)]["incoming"].append(popped) # pass last element to incoming for opponent
-                        games[game_id][player_id % 2]["buffer"] = games[game_id][player_id % 2]["text"][-1] # set buffer again
+
+                        popped = games[game_id][player_id % 2]["text"].pop(0) # remove last element in text
+                        games[game_id][not (player_id % 2)]["incoming"].append([popped, 22, 550]) # pass first element to incoming for opponent [word, top right]
+                        
+                        # set next buffer
+                        games[game_id][player_id % 2]["buffer"] = games[game_id][player_id % 2]["text"][0] 
+
+                        # set next peek
+                        games[game_id][player_id % 2]["peek"] = games[game_id][player_id % 2]["text"][1] # set peek again
 
             broadcast_state(game_id) # after updates, send full game state to every connected client
 
@@ -125,15 +156,19 @@ def main():
         if player_id % 2 == 0:
             games[game_id] = { 
             0 : {
-                "text" : library[book].copy(),
-                "buffer" : library[book][-1],
-                "incoming" : []
+                "text" : book_tokens.copy(),
+                "buffer" : book_tokens[0],
+                "peek" : book_tokens[1],
+                "incoming" : [],
+                "health" : 500
             },
 
             1 : {
-                "text" : library[book].copy(),
-                "buffer" : library[book][-1],
-                "incoming" : []
+                "text" : book_tokens.copy(),
+                "buffer" : book_tokens[0],
+                "peek" : book_tokens[1],
+                "incoming" : [],
+                "health" : 500
             },
             
             "start" : [0, 0], # bits representing ready or not
