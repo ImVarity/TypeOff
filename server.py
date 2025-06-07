@@ -5,7 +5,7 @@ import json
 
 
 HOST = '0.0.0.0' # any machine on same network can join '127.0.0.1' for only my machine
-PORT = 7777
+PORT = 7778
 
 # standard block setup
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # af_inet -> IPv4 | sock_stream -> TCP
@@ -83,54 +83,64 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
         try: # waiting to receive data from client
             msg = recv_next_block(conn)
             
-            
-            if msg == "READY":
-                with lock:
-                    games[game_id]["start"][user_id] = 1
-            elif msg == "HI":
-                with lock:
-                    print("hellooooo")
-            
-            elif msg == "INCOMING":
-                with lock:
-                    for i in range(len(games[game_id][user_id]["incoming"])):
-                        games[game_id][user_id]["incoming"][i][1] += 2
-            
-            elif msg == "OUTGOING":
-                with lock:
-                    for i in range(len(games[game_id][user_id]["incoming"])):
-                        games[game_id][user_id]["incoming"][i][2] -= 2
+            match msg:
+                case "READY":
+                    with lock:
+                        games[game_id]["start"][user_id] = 1
+                case "HI":
+                    with lock:
+                        print("hellooooo")
                 
-            elif msg == "MODE": # switch modes
-                with lock:
-                    games[game_id][user_id]["mode"] = not games[game_id][user_id]["mode"]
-            
+                case "INCOMING":
+                    with lock:
+                        for i in range(len(games[game_id][user_id]["incoming"])):
+                            games[game_id][user_id]["incoming"][i][1] += 2
+                
+                case "OUTGOING":
+                    with lock:
+                        for i in range(len(games[game_id][user_id]["incoming"])):
+                            games[game_id][user_id]["incoming"][i][2] -= 2
+                    
+                case "MODE": # switch modes
+                    with lock:
+                        games[game_id][user_id]["mode"] = not games[game_id][user_id]["mode"]
+                
+                case "INCREASE_MULTI": # add to multiplier
+                    with lock:
+                        games[game_id][user_id]["multiplier"] = round(games[game_id][user_id]["multiplier"] + 0.01, 2)
 
-            elif isinstance(msg, tuple):
-                with lock:
-                    games[game_id][user_id]["health"] -= msg[0] * msg[1] # multiplier * damage
-                    games[game_id][user_id]["incoming"].pop(0)
-            
 
-            elif msg == "DEFEND": # receive words
-                with lock:
-                    games[game_id][user_id]["incoming"][0][0] = games[game_id][user_id]["incoming"][0][0][1:]
-                    if games[game_id][user_id]["incoming"][0][0] == "": # empty
-                        games[game_id][user_id]["incoming"].pop(0)
-
-            elif msg == "ATTACK": # send words
-                with lock:
-                    games[game_id][user_id]["buffer"] = games[game_id][user_id]["buffer"][1:]
-                    if games[game_id][user_id]["buffer"] == "": # buffer is empty
-
-                        popped = games[game_id][user_id]["text"].pop(0) # remove last element in text
-                        games[game_id][not (user_id)]["incoming"].append([popped, 22, 550]) # pass first element to incoming for opponent [word, top right]
+                case "RESET_MULTI": # missed a character
+                    with lock:
+                        games[game_id][user_id]["multiplier"] = 1
                         
-                        # set next buffer
-                        games[game_id][user_id]["buffer"] = games[game_id][user_id]["text"][0] 
 
-                        # set next peek
-                        games[game_id][user_id]["peek"] = games[game_id][user_id]["text"][1] # set peek again
+
+                case (multiplier, damage):
+                    with lock:
+                        games[game_id][user_id]["health"] -= multiplier * damage
+                        games[game_id][user_id]["incoming"].pop(0)
+                
+
+                case "DEFEND": # receive words
+                    with lock:
+                        games[game_id][user_id]["incoming"][0][0] = games[game_id][user_id]["incoming"][0][0][1:]
+                        if games[game_id][user_id]["incoming"][0][0] == "": # empty
+                            games[game_id][user_id]["incoming"].pop(0)
+
+                case "ATTACK": # send words
+                    with lock:
+                        games[game_id][user_id]["buffer"] = games[game_id][user_id]["buffer"][1:]
+                        if games[game_id][user_id]["buffer"] == "": # buffer is empty
+
+                            popped = games[game_id][user_id]["text"].pop(0) # remove last element in text
+                            games[game_id][not (user_id)]["incoming"].append([popped, 22, 550]) # pass first element to incoming for opponent [word, top right]
+                            
+                            # set next buffer
+                            games[game_id][user_id]["buffer"] = games[game_id][user_id]["text"][0] 
+
+                            # set next peek
+                            games[game_id][user_id]["peek"] = games[game_id][user_id]["text"][1] # set peek again
 
             broadcast_state(game_id) # after updates, send full game state to every connected client
 
@@ -169,7 +179,8 @@ def main():
                 "peek" : book_tokens[1],
                 "incoming" : [],
                 "health" : 500,
-                "mode" : 1 # 1 -> attack | 0 -> defend
+                "mode" : 1, # 1 -> attack | 0 -> defend
+                "multiplier" : 1 # multiplier
             },
 
             1 : {
@@ -178,7 +189,8 @@ def main():
                 "peek" : book_tokens[1],
                 "incoming" : [],
                 "health" : 500,
-                "mode" : 1
+                "mode" : 1,
+                "multiplier" : 1
             },
             
             "start" : [0, 0], # bits representing ready or not
