@@ -2,6 +2,7 @@ import socket # for connection
 import pickle # for converting to bytes and sending
 import pygame
 import threading
+import time
 
 
 WIDTH, HEIGHT = 600, 600 # screen size
@@ -10,18 +11,28 @@ VEL = 5
 MAX_FPS = 60
 DAMAGE = 40
 
+GREEN = (255, 127, 127)
+RED = (118, 242, 104)
+AQUA = (0, 175, 185)
+LIGHTRED = (240, 113, 103)
+SAIL = (254, 217, 183)
+
 # if mode on words
-FOCUS_COLOR = (255, 99, 99)
+FOCUS_COLOR = LIGHTRED
 UNFOCUS_COLOR = (255, 160, 150)
 
 
-BACKGROUND_COLOR = (239, 228, 210)
+BACKGROUND_COLOR = SAIL
 
 
-OPP_FOCUS_COLOR = (58, 89, 209)
+OPP_FOCUS_COLOR = AQUA
 OPP_UNFOCUS_COLOR = (122, 198, 210)
 
-
+GREEN = (255, 127, 127)
+RED = (118, 242, 104)
+AQUA = (0, 175, 185)
+LIGHTRED = (240, 113, 103)
+SAIL = (254, 217, 183)
 
 
 
@@ -40,7 +51,7 @@ pygame.display.set_caption("Battle Type")
 # FONTS
 font = pygame.font.Font('mc.otf', 28)
 
-# font = pygame.font.SysFont(None, 48)
+
 clock = pygame.time.Clock()
 
 player_id = None # player_id from server | 0 ... N
@@ -121,9 +132,9 @@ def receive_state():
 
 
 
-
+delta_time = float(1/MAX_FPS)
 def main():
-    global player_id, client_id
+    global player_id, client_id, delta_time
 
     player_id = recv_next_block(client)
     client_id = player_id % 2
@@ -139,8 +150,18 @@ def main():
 
 
     run = True
-    while run:
-        clock.tick(MAX_FPS)
+    while run: 
+        delta_time = clock.tick(MAX_FPS) / 1000
+        if game["resetting"]:
+            reset_screen()
+            send_packet(client, "FINISH RESET")
+        elif game["reset"] == 1:
+            send_packet(client, "RESET GAME")
+            continue
+            
+        
+
+
         character = None
         
         for event in pygame.event.get():
@@ -156,7 +177,13 @@ def main():
                         send_packet(client, "READY")
                     except:
                         pass
+                if event.key == pygame.K_SPACE:
+                    try:
+                        send_packet(client, "NOTIFY RESET")
+                    except:
+                        pass
                     
+        
 
         match = False
 
@@ -270,13 +297,28 @@ def draw_opp():
     pygame.draw.rect(window, OPP_FOCUS_COLOR, health_bar)
 
 
+reset_wait = 3 # seconds
+def reset_screen():
+    global reset_wait
+    while reset_wait > 0:
+        window.fill((255, 255, 255))
+        reset_wait -= delta_time  
+        text = font.render("RESETTING GAME", True, (0, 0, 0))
+        window.blit(text, (WIDTH // 2 - text.get_width() // 2, WIDTH // 2 - text.get_height() // 2))
+        pygame.display.update()
+    reset_wait = 3
 
-slide_x = 0
+
+
+slide_x = 600
+t = 0
 blink = 0
 show = True
 def waiting_screen():
-    global slide_x, blink, show
+    global slide_x, blink, show, t
     blink += 1
+    t += 0.01
+    t = min(t, 1.0)  # clamp to max 1.0
     if blink % 20 == 0:
         show = not show
 
@@ -284,13 +326,15 @@ def waiting_screen():
     
     ## YOU BOTTOM LEFT
     text = font.render(f"YOU", True, (0, 0, 0))
-    window.blit(text, (50, 550))
+    eased_t = 1 - (1 - t) ** 5  # easing
+    x_pos = int(lerp(1000, 50, eased_t))
+    
+    window.blit(text, (x_pos, 550))
 
     ## READY INDICATOR
     ready = game["start"][client_id]
     ready_text = font.render(f"{"READY" if ready else "NOT READY"}", True, (0, 0, 0))
-
-    if show:
+    if (show or ready) and t == 1:
         window.blit(ready_text, (WIDTH // 2 - ready_text.get_width() // 2, 550))
 
 
@@ -301,16 +345,21 @@ def waiting_screen():
 
     ## OPP TOP RIGHT
     opp_text = font.render(f"OPP", True, (0, 0, 0))
-    window.blit(opp_text, (550 - opp_text.get_width(), 28))
+    eased_t = 1 - (1 - t) ** 5  # easing
+    x_pos = int(lerp(550 - opp_text.get_width() - 950, 550 - opp_text.get_width(), eased_t))
+    window.blit(opp_text, (x_pos, 28))
 
     ## OPP READY INDICATOR
     opp_ready = game["start"][not client_id]
     opp_ready_text = font.render(f"{"READY" if opp_ready else "NOT READY"}", True, (0, 0, 0))
-    if show:
+    if (show or opp_ready) and t == 1:
         window.blit(opp_ready_text, (WIDTH // 2 - opp_ready_text.get_width() // 2, 28))
 
     pygame.display.update()
 
+
+def lerp(start, end, t):
+    return start + (end - start) * t
 
         
 def clicked(event):

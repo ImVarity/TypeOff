@@ -26,6 +26,33 @@ with open("library.json", "r") as f:
     library = json.load(f)
     book_tokens = library[book]
 
+new_game = { 
+    0 : {
+        "text" : book_tokens.copy(),
+        "buffer" : book_tokens[0],
+        "peek" : book_tokens[1],
+        "incoming" : [],
+        "health" : 500,
+        "mode" : 1, # 1 -> attack | 0 -> defend
+        "multiplier" : 1 # multiplier
+    },
+
+    1 : {
+        "text" : book_tokens.copy(),
+        "buffer" : book_tokens[0],
+        "peek" : book_tokens[1],
+        "incoming" : [],
+        "health" : 500,
+        "mode" : 1,
+        "multiplier" : 1
+    },
+    
+    "reset" : 0,
+    "resetting" : 0,
+    "start" : [0, 0], # bits representing ready or not
+    "winner" : -1 # id of winner 0 or 1
+}
+
 
 
 counter = 0 # shared counter
@@ -141,6 +168,52 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
 
                             # set next peek
                             games[game_id][user_id]["peek"] = games[game_id][user_id]["text"][1] # set peek again
+                
+                case "NOTIFY RESET":
+                    games[game_id]["reset"] = 1
+                
+                case "FINISH RESET":
+                    games[game_id]["resetting"] = 0
+
+                case "RESET GAME": # reset game
+                    with lock:
+                        conn.setblocking(False)  # or conn.settimeout(0)
+
+                        try:
+                            while True:
+                                data = conn.recv(4096)
+                                if not data:
+                                    break
+                        except BlockingIOError:
+                            # Nothing left to read
+                            pass
+
+                        conn.setblocking(True)  # Reset to normal
+                        games[game_id]["start"] = [0, 0]
+                        games[game_id]["reset"] = 0
+                        games[game_id]["resetting"] = 1
+                        games[game_id]["winner"] = -1
+                        games[game_id][user_id] = {
+                            "text" : book_tokens.copy(),
+                            "buffer" : book_tokens[0],
+                            "peek" : book_tokens[1],
+                            "incoming" : [],
+                            "health" : 500,
+                            "mode" : 1, # 1 -> attack | 0 -> defend
+                            "multiplier" : 1 # multiplier
+                        }
+                        games[game_id][not user_id] = {
+                            "text" : book_tokens.copy(),
+                            "buffer" : book_tokens[0],
+                            "peek" : book_tokens[1],
+                            "incoming" : [],
+                            "health" : 500,
+                            "mode" : 1, # 1 -> attack | 0 -> defend
+                            "multiplier" : 1 # multiplier
+                        }
+
+
+                        
 
             broadcast_state(game_id) # after updates, send full game state to every connected client
 
@@ -172,30 +245,7 @@ def main():
 
         # only for first player of a new game
         if player_id % 2 == 0:
-            games[game_id] = { 
-            0 : {
-                "text" : book_tokens.copy(),
-                "buffer" : book_tokens[0],
-                "peek" : book_tokens[1],
-                "incoming" : [],
-                "health" : 500,
-                "mode" : 1, # 1 -> attack | 0 -> defend
-                "multiplier" : 1 # multiplier
-            },
-
-            1 : {
-                "text" : book_tokens.copy(),
-                "buffer" : book_tokens[0],
-                "peek" : book_tokens[1],
-                "incoming" : [],
-                "health" : 500,
-                "mode" : 1,
-                "multiplier" : 1
-            },
-            
-            "start" : [0, 0], # bits representing ready or not
-            "winner" : -1 # id of winner 0 or 1
-        }
+            games[game_id] = new_game.copy()
         threading.Thread(target=handle_client, args=(conn, addr, player_id, game_id)).start()
         game_id = game_id + 1 if player_id % 2 != 0 else game_id # only update if there are 2 players
         player_id += 1
