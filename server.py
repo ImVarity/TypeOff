@@ -102,7 +102,7 @@ def broadcast_state(game_id): # sends game to all connected clients in game
 
 def handle_client(conn, addr, player_id, game_id): # ran in another thread
     print(f"[NEW CONNECTION] {addr} connected as Player {player_id} with Game ID {game_id}.")
-    send_packet(conn, player_id % 2)# sending player id to client who just connected (which is conn)
+    send_packet(conn, player_id % 2)# sending player id to client who just connected
 
     user_id = player_id % 2
     while True:
@@ -168,12 +168,18 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
 
                             # set next peek
                             games[game_id][user_id]["peek"] = games[game_id][user_id]["text"][1] # set peek again
+
+                case "WINNER": # user wins
+                    with lock:
+                        games[game_id]["winner"] = user_id
                 
                 case "NOTIFY RESET":
-                    games[game_id]["reset"] = 1
+                    with lock:
+                        games[game_id]["reset"] = 1
                 
                 case "FINISH RESET":
-                    games[game_id]["resetting"] = 0
+                    with lock:
+                        games[game_id]["resetting"] = 0
 
                 case "RESET GAME": # reset game
                     with lock:

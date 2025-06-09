@@ -2,7 +2,6 @@ import socket # for connection
 import pickle # for converting to bytes and sending
 import pygame
 import threading
-import time
 
 
 WIDTH, HEIGHT = 600, 600 # screen size
@@ -21,8 +20,9 @@ SAIL = (254, 217, 183)
 FOCUS_COLOR = LIGHTRED
 UNFOCUS_COLOR = (255, 160, 150)
 
+SEASHELL = (255, 245, 238)
 
-BACKGROUND_COLOR = SAIL
+BACKGROUND_COLOR = SEASHELL
 
 
 OPP_FOCUS_COLOR = AQUA
@@ -47,6 +47,13 @@ lock = threading.Lock()
 pygame.init()
 window = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Battle Type")
+
+
+pygame.mixer.init()
+click_sfx = pygame.mixer.Sound("sfx/click_sound.mp3")
+error_sfx = pygame.mixer.Sound("sfx/error_sound.mp3")
+mode_sfx = pygame.mixer.Sound("sfx/mode_sound.mp3")
+
 
 # FONTS
 font = pygame.font.Font('mc.otf', 28)
@@ -152,6 +159,13 @@ def main():
     run = True
     while run: 
         delta_time = clock.tick(MAX_FPS) / 1000
+
+        # once both players ready, get off waiting screen
+        draw_window() if game["start"][0] and game["start"][1] else waiting_screen()
+
+        if game["winner"] != -1:
+            send_packet(client, "NOTIFY RESET")
+
         if game["resetting"]:
             reset_screen()
             send_packet(client, "FINISH RESET")
@@ -172,9 +186,16 @@ def main():
             if event.type == pygame.QUIT:
                 run = False
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_RETURN:
+                if event.key == pygame.K_LSHIFT:
+                    click_sfx.play()
                     try:
                         send_packet(client, "READY")
+                    except:
+                        pass
+                if event.key == pygame.K_RETURN:
+                    mode_sfx.play()
+                    try:
+                        send_packet(client, "MODE")
                     except:
                         pass
                 if event.key == pygame.K_SPACE:
@@ -189,6 +210,7 @@ def main():
 
         # offense
         if mode == 1 and character == buffer[0]: # clicked the matching key
+            click_sfx.play()
             # update matched character
             send_packet(client, "ATTACK")
             match = True
@@ -196,6 +218,7 @@ def main():
 
         # defense
         if mode == 0 and buffer_def is not None and character == buffer_def[0]:
+            click_sfx.play()
             send_packet(client, "DEFEND")
             match = True
         
@@ -204,11 +227,17 @@ def main():
             send_packet(client, "INCREASE_MULTI")
 
         if character is not None and not match and multiplier > 1:
+            error_sfx.play()
             send_packet(client, "RESET_MULTI")
 
-        if len(game[player_id % 2]["incoming"]) > 0 and game[player_id % 2]["incoming"][0][1] > 600:
+        if len(game[player_id % 2]["incoming"]) > 0 and game[player_id % 2]["incoming"][0][1] > 550:
             # if passes your side deal (multiplier * damage)
             send_packet(client, (multiplier_opp, DAMAGE)) 
+
+
+        # declare winner
+        if game[not player_id % 2]["health"] <= 0:
+            send_packet(client, "WINNER")
 
         
         
@@ -220,8 +249,7 @@ def main():
             send_packet(client, "OUTGOING")
         
 
-        # once both players ready, get off waiting screen
-        draw_window() if game["start"][0] and game["start"][1] else waiting_screen()
+
 
     
     # client disconnected
@@ -254,7 +282,7 @@ def draw_user():
     window.blit(text, (x_word, y_word))
 
     # MULTIPLIER ABOVE PEEK WORD
-    multi = font.render(f"x{multiplier}", True, (255, 255, 255))
+    multi = font.render(f"x{multiplier}", True, (0, 0, 0))
     window.blit(multi, (250, HEIGHT // 2 + HEIGHT // 6 - 27))
 
     # PEEK WORD PLACED AT MIDDLE BOTTOM
@@ -319,7 +347,7 @@ def waiting_screen():
     blink += 1
     t += 0.01
     t = min(t, 1.0)  # clamp to max 1.0
-    if blink % 20 == 0:
+    if blink % 40 == 0:
         show = not show
 
     window.fill((255, 255, 255))
@@ -339,7 +367,7 @@ def waiting_screen():
 
 
     ## INSTRUCTIONS
-    instruction = font.render(f"Press ENTER to ready up", True, (0, 0, 0))
+    instruction = font.render(f"Press R to ready up", True, (0, 0, 0))
     window.blit(instruction, (WIDTH // 2 - instruction.get_width() // 2, HEIGHT // 2 - instruction.get_height() // 2))
     
 
