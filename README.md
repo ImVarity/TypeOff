@@ -37,3 +37,19 @@
             data += chunk
 
         return data
+
+<br><br>
+
+
+## __Problem__
+### Creating a lobby for players to join and choose who they want to play against
+### Solution
+    At first I created a whole new main on the client side that started the user in the lobby and I thought that I needed to run more threads to handle both the game and the lobby. Running a thread in another thread did not seem right. So, I had to combine them and have one while loop handle both the lobby and the game. That took forever... Putting together two different mains so that they both worked independently and not ruining what already worked was horrible. On the server side, I had to handlers for the client and the game as well and had to combine them.. 
+
+<br><br>
+
+
+## __Problem__
+### Having two different players join the same game
+### Solution
+    This took forever to think of, but I would have the user click on who they wanted to play against and the client would send that lobby_id to the server and change the status of both players to the game_id that would would be in together (this is the idea that took a while. I didn't know how to communicate that they were both in the same room). The server would create a new game and new player_id and then leave the lobby handler while loop. The player that didn't click would have to see that someone joined their lobby, because of their new game_id in their lobby instance, and get their own player_id then leave the while loop.

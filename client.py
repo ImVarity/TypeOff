@@ -34,6 +34,7 @@ AQUA = (0, 175, 185)
 LIGHTRED = (240, 113, 103)
 SAIL = (254, 217, 183)
 
+cursor = [0, 0]
 
 
 hostname = socket.gethostname()
@@ -64,8 +65,14 @@ clock = pygame.time.Clock()
 player_id = None # player_id from server | 0 ... N
 client_id = None # player_id in the game on client | 0 or 1
 
+# lobby
+lobby = None
+lobby_id = None
+
 # simplified variables
 # USER
+username = ""
+username_submitted = False
 buffer = None
 buffer_def = None
 health = None
@@ -73,6 +80,7 @@ mode = None
 multiplier = 1
 
 # OPPONENT
+username_opp = ""
 mode_opp = None
 health_opp = None
 multiplier_opp = 1
@@ -107,61 +115,141 @@ def recv_next_block(conn):
     loaded_data = pickle.loads(data)
     return loaded_data
 
-def receive_state():
-    global game, mode, mode_opp, buffer, buffer_def, health, health_opp, multiplier, multiplier_opp
+def receive_state(): # handes lobby and game now
+    global player_id, client_id
+    global lobby
+    global game
+    global mode, buffer, buffer_def, health, multiplier
+    global mode_opp, health_opp, multiplier_opp, username_opp
     while True:
         # print("receiving...")
         try:
             
-            loaded_game = recv_next_block(client)
+            data = recv_next_block(client)
+            if isinstance(data, list):
+                with lock:
+                    lobby = data
             
-            with lock:
-                game = loaded_game
-                # USER DATA
-                buffer = game[player_id % 2]["buffer"]
-                buffer_def = game[player_id % 2]["incoming"][0][0] if len(game[player_id % 2]["incoming"]) > 0 else None
-                mode = game[player_id % 2]["mode"]
-                health = game[player_id % 2]["health"]
-                multiplier = game[player_id % 2]["multiplier"]
+            if isinstance(data, tuple): # player id was passed
+                with lock:
+                    player_id = data[0]
+                    client_id = player_id % 2
+                    game = data[1]
 
 
-                # OPPONENT DATA
-                mode_opp = game[not player_id % 2]["mode"]
-                health_opp = game[not player_id % 2]["health"]
-                multiplier_opp = game[not player_id % 2]["multiplier"]
+        
+            elif isinstance(data, dict): # its the game
+                with lock:
+                    game = data
+                    # USER DATA
+                    buffer = game[player_id % 2]["buffer"]
+                    buffer_def = game[player_id % 2]["incoming"][0][0] if len(game[player_id % 2]["incoming"]) > 0 else None
+                    mode = game[player_id % 2]["mode"]
+                    health = game[player_id % 2]["health"]
+                    multiplier = game[player_id % 2]["multiplier"]
 
 
+                    # OPPONENT DATA
+                    mode_opp = game[not player_id % 2]["mode"]
+                    health_opp = game[not player_id % 2]["health"]
+                    multiplier_opp = game[not player_id % 2]["multiplier"]
+                    username_opp = game[not player_id % 2]["name"]
+            
 
         except Exception as e:
             print("receive_state error:", e)
             break
+        
 
 
 
 
 delta_time = float(1/MAX_FPS)
 def main():
-    global player_id, client_id, delta_time
+    global delta_time, lobby_id, username, username_submitted, cursor, client_id
 
-    player_id = recv_next_block(client)
-    client_id = player_id % 2
-    print(f"Connected as Player {player_id}")
-
+    lobby_id = recv_next_block(client)
     threading.Thread(target=receive_state, daemon=True).start()
-
-    send_packet(client, "HI") # triggers the server
+    send_packet(client, "HI")
     
-    while game is None or buffer is None: # make sure that we have everything before we start the game
-        print("Waiting for game")
-
-
-
+    in_game = False
     run = True
-    while run: 
-        delta_time = clock.tick(MAX_FPS) / 1000
 
-        # once both players ready, get off waiting screen
+    while run:
+        delta_time = clock.tick(MAX_FPS) / 1000
+        cursor[0], cursor[1] = pygame.mouse.get_pos()
+        character = None
+
+        for event in pygame.event.get():
+            click = clicked(event)
+            if click:
+                character = click
+
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                client.close()
+                return
+
+
+            # HANLDES LOBBY STUFF
+            if not in_game:
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_RETURN and len(username) > 0 and not username_submitted:
+                        send_packet(client, username)
+                        username_submitted = True
+                    elif event.key == pygame.K_BACKSPACE and not username_submitted:
+                        username = username[:-1]
+                    elif character and len(username) < 16 and not username_submitted:
+                        username += character
+
+
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    for i in range(len(lobby)):
+                        if i == lobby_id or lobby[i][2] == "No Name":
+                            continue
+
+                        name = lobby[i][2]
+                        text_surface = font.render(name, True, (255, 255, 255))
+                        rect = pygame.Rect(0, 100 + i * 40, WIDTH, text_surface.get_height())
+                        if rect.collidepoint(cursor):
+                            send_packet(client, i)
+                            print("Joined lobby", i)
+            
+            # HANDLES GAME STUFF
+            if in_game:
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_SPACE:
+                        send_packet(client, "READY")
+
+            
+
+
+        if not in_game:
+            if not username_submitted:
+                draw_info()
+                continue
+            
+            if lobby and lobby[lobby_id][1] != -1:
+                in_game = True
+                send_packet(client, "JOIN")
+                print("Lobby ready. Entering game...")
+                continue
+
+            draw_lobby()
+            # print("waiting in lobby")
+            continue
+
+
+        
+        if game is None or player_id is None:
+            print("waiting for game")
+            # send_packet(client, "HI")
+            continue
+
+
+        # make em wait if bath aren't ready yet
         draw_window() if game["start"][0] and game["start"][1] else waiting_screen()
+
 
         if game["winner"] != -1:
             send_packet(client, "NOTIFY RESET")
@@ -172,39 +260,12 @@ def main():
         elif game["reset"] == 1:
             send_packet(client, "RESET GAME")
             continue
+
             
-        
+        if game[client_id]["name"] == "No Name":
+            send_packet(client, ("NAME", username))
+            continue
 
-
-        character = None
-        
-        for event in pygame.event.get():
-            click = clicked(event)
-            if click:
-                character = click
-
-            if event.type == pygame.QUIT:
-                run = False
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_LSHIFT:
-                    click_sfx.play()
-                    try:
-                        send_packet(client, "READY")
-                    except:
-                        pass
-                if event.key == pygame.K_RETURN:
-                    mode_sfx.play()
-                    try:
-                        send_packet(client, "MODE")
-                    except:
-                        pass
-                if event.key == pygame.K_SPACE:
-                    try:
-                        send_packet(client, "NOTIFY RESET")
-                    except:
-                        pass
-                    
-        
 
         match = False
 
@@ -250,13 +311,51 @@ def main():
         
 
 
-
-    
-    # client disconnected
     pygame.quit()
-    client.close() # releases network resources (file descriptors, memory)
+    client.close()
+
+def draw_lobby():
+    window.fill((0, 0, 0))  # black background
 
 
+    title = font.render("Lobby", True, (255, 255, 255))
+    window.blit(title, (WIDTH // 2 - title.get_width() // 2, 30))
+    # print("LOBBY", lobby)
+    for i in range(len(lobby)):
+        if lobby[i][2] == "No Name":
+            continue
+        room = lobby[i]
+        name = room[2]
+        user_text = font.render(name, True, (200, 200, 200))
+
+        # background when hovered
+        hover_block = pygame.Rect(0, 100 + i * 40, WIDTH, user_text.get_height())
+        pygame.draw.rect(window, (255, 255, 255) if cursor[1] >= 100 + i * 40 and cursor[1] <= 100 + i * 40 + user_text.get_height() else (0, 0 ,0), hover_block)
+        
+        # the lobby
+        window.blit(user_text, (WIDTH // 2 - user_text.get_width() // 2, 100 + i * 40))  # spacing between names
+
+    pygame.display.update()
+
+
+name_blink = 0
+name_blink_show = False
+def draw_info():
+    window.fill((0, 0, 0))
+    global name_blink_show, name_blink
+
+    name_blink += 1
+    if name_blink % 20 == 0:
+        name_blink_show = not name_blink_show
+
+
+    title = font.render("ENTER USERNAME", True, (255, 255, 255))
+    window.blit(title, (WIDTH // 2 - title.get_width() // 2, HEIGHT // 3))
+
+    display_name = font.render(f"{username}{"l" if name_blink_show else ""}", True, (200, 200, 200))
+    window.blit(display_name, (WIDTH // 2 - display_name.get_width() // 2, HEIGHT // 2))
+
+    pygame.display.update()
 
 
 def draw_window():
@@ -353,7 +452,7 @@ def waiting_screen():
     window.fill((255, 255, 255))
     
     ## YOU BOTTOM LEFT
-    text = font.render(f"YOU", True, (0, 0, 0))
+    text = font.render(f"{username}", True, (0, 0, 0))
     eased_t = 1 - (1 - t) ** 5  # easing
     x_pos = int(lerp(1000, 50, eased_t))
     
@@ -367,12 +466,12 @@ def waiting_screen():
 
 
     ## INSTRUCTIONS
-    instruction = font.render(f"Press R to ready up", True, (0, 0, 0))
+    instruction = font.render(f"Press SPACE to ready up", True, (0, 0, 0))
     window.blit(instruction, (WIDTH // 2 - instruction.get_width() // 2, HEIGHT // 2 - instruction.get_height() // 2))
     
 
     ## OPP TOP RIGHT
-    opp_text = font.render(f"OPP", True, (0, 0, 0))
+    opp_text = font.render(f"{game[not player_id % 2]["name"]}", True, (0, 0, 0))
     eased_t = 1 - (1 - t) ** 5  # easing
     x_pos = int(lerp(550 - opp_text.get_width() - 950, 550 - opp_text.get_width(), eased_t))
     window.blit(opp_text, (x_pos, 28))
@@ -400,3 +499,6 @@ def clicked(event):
 
 if __name__ == "__main__":
     main()
+
+
+    

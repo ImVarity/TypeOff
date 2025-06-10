@@ -2,7 +2,7 @@ import socket
 import threading
 import pickle
 import json
-
+import copy
 
 HOST = '0.0.0.0' # any machine on same network can join '127.0.0.1' for only my machine
 PORT = 7778
@@ -14,6 +14,10 @@ server.listen()
 
 
 # Shared Game States
+lobby = [] # (addr)
+
+usernames = {} # player_id -> username
+waiters = {} # lobby_id -> client socket
 clients = {} # player_id -> client socket
 games = {} # game_id -> game
 # game -> {0: ["hello", "world"], 1: ["hello", "world"]}
@@ -34,7 +38,8 @@ new_game = {
         "incoming" : [],
         "health" : 500,
         "mode" : 1, # 1 -> attack | 0 -> defend
-        "multiplier" : 1 # multiplier
+        "multiplier" : 1, # multiplier
+        "name" : "No Name"
     },
 
     1 : {
@@ -44,7 +49,8 @@ new_game = {
         "incoming" : [],
         "health" : 500,
         "mode" : 1,
-        "multiplier" : 1
+        "multiplier" : 1,
+        "name" : "No Name"
     },
     
     "reset" : 0,
@@ -102,11 +108,15 @@ def broadcast_state(game_id): # sends game to all connected clients in game
 
 def handle_client(conn, addr, player_id, game_id): # ran in another thread
     print(f"[NEW CONNECTION] {addr} connected as Player {player_id} with Game ID {game_id}.")
-    send_packet(conn, player_id % 2)# sending player id to client who just connected
+
+    send_packet(conn, (player_id, games[game_id]))# sending player id to client who just connected
+    # broadcast_state(game_id)
 
     user_id = player_id % 2
     while True:
         # print(games)
+        # print(usernames)
+
         try: # waiting to receive data from client
             msg = recv_next_block(conn)
             
@@ -116,7 +126,8 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
                         games[game_id]["start"][user_id] = 1
                 case "HI":
                     with lock:
-                        print("hellooooo")
+                        pass
+                        # print("hellooooo")
                 
                 case "INCOMING":
                     with lock:
@@ -143,11 +154,17 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
                         
 
 
-                case (multiplier, damage):
-                    with lock:
-                        games[game_id][user_id]["health"] -= multiplier * damage
-                        games[game_id][user_id]["incoming"].pop(0)
-                
+                case tuple():
+                    if msg[0] == "NAME":
+                        with lock:
+                            games[game_id][user_id]["name"] = msg[1]
+                    else:
+                        with lock:
+                            multiplier = msg[0]
+                            damage = msg[1]
+                            games[game_id][user_id]["health"] -= multiplier * damage
+                            games[game_id][user_id]["incoming"].pop(0)
+                    
 
                 case "DEFEND": # receive words
                     with lock:
@@ -195,32 +212,11 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
                             pass
 
                         conn.setblocking(True)  # Reset to normal
-                        games[game_id]["start"] = [0, 0]
-                        games[game_id]["reset"] = 0
+                        games[game_id] = copy.deepcopy(new_game)
                         games[game_id]["resetting"] = 1
-                        games[game_id]["winner"] = -1
-                        games[game_id][user_id] = {
-                            "text" : book_tokens.copy(),
-                            "buffer" : book_tokens[0],
-                            "peek" : book_tokens[1],
-                            "incoming" : [],
-                            "health" : 500,
-                            "mode" : 1, # 1 -> attack | 0 -> defend
-                            "multiplier" : 1 # multiplier
-                        }
-                        games[game_id][not user_id] = {
-                            "text" : book_tokens.copy(),
-                            "buffer" : book_tokens[0],
-                            "peek" : book_tokens[1],
-                            "incoming" : [],
-                            "health" : 500,
-                            "mode" : 1, # 1 -> attack | 0 -> defend
-                            "multiplier" : 1 # multiplier
-                        }
 
 
                         
-
             broadcast_state(game_id) # after updates, send full game state to every connected client
 
         except:
@@ -236,25 +232,110 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
     broadcast_state(game_id)
 
 
+def broadcast_lobby():
+    with lock:
+
+        for waiter in waiters.values():
+            try:
+                send_packet(waiter, lobby)
+            except:
+                pass
+
+def handle_connection(conn, addr, lobby_id):
+    print(f"Merger")
+    send_packet(conn, lobby_id)
+
+    username = None
+    game_id = None
+    player_id = None
+
+    in_lobby = True
+    while in_lobby:
+
+        try:
+                
+            msg = recv_next_block(conn)
+
+            # once here, opp joined the lobby and is waiting for you to load in
+            
+            if msg == "HI":
+                print("HELLO")
+            
+            elif msg == "JOIN": # when someone joined their lobby, they have to know too
+                with lock:
+                    # del waiters[lobby_id]
+
+                    game_id = lobby[lobby_id][1]
+                    player_id = game_id * 2
+                    clients[player_id] = conn
+
+                    in_lobby = False
+
+
+            elif isinstance(msg, str):
+                with lock: # msg is username
+                    username = msg
+                    lobby[lobby_id][2] = msg # addr, lobby id (-1 if none), username
+            
+            
+            elif isinstance(msg, int): # chose a lobby and gives lobby index
+                with lock: # msg is lobby both players join
+                    # change lobby they both are in from -1 to their game id
+                    # del waiters[lobby_id]
+
+                    game_id = len(games) + 1
+                    lobby[lobby_id][1] = game_id
+                    player_id = game_id * 2 + 1
+
+                    # opp that needs to chckec
+                    lobby[msg][1] = game_id
+
+                    # identify in client your playerid
+                    clients[player_id] = conn
+
+
+                    # identify the game is being created so dont take it
+                    games[game_id] = copy.deepcopy(new_game)
+
+                    in_lobby = False
+
+            broadcast_lobby()
+
+
+        except Exception as e:
+            print(f"Error: {e}")
+    
+
+    
+    # Finished the lobby
+    # we got player_id, game_id, username
+
+
+    handle_client(conn, addr, player_id, game_id)
+
+
+    # Deleting lobby at the end
 
 
 
 def main():
-    print("[STARTING] Server is running...")
-    player_id = 0
-    game_id = 0
+    print("[STARTING] Lobby is running...")
+    lobby_id = 0
     while True:
         conn, addr = server.accept() # when client connects it gets this
-        # it just waits here until it gets a connection...
+        # waits here until it gets a connection
 
-        clients[player_id] = conn
+        waiters[lobby_id] = conn
+        lobby.append([addr, -1, "No Name"]) # idx is current lobby [addr, lobby joined, username]
 
-        # only for first player of a new game
-        if player_id % 2 == 0:
-            games[game_id] = new_game.copy()
-        threading.Thread(target=handle_client, args=(conn, addr, player_id, game_id)).start()
-        game_id = game_id + 1 if player_id % 2 != 0 else game_id # only update if there are 2 players
-        player_id += 1
+        threading.Thread(target=handle_connection, args=(conn, addr, lobby_id), daemon=True).start()
+
+
+        lobby_id += 1
+
 
 if __name__ == "__main__":
     main()
+
+
+
