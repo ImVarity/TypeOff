@@ -5,7 +5,7 @@ import json
 import copy
 
 HOST = '0.0.0.0' # any machine on same network can join '127.0.0.1' for only my machine
-PORT = 7778
+PORT = 7777
 
 # standard block setup
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # af_inet -> IPv4 | sock_stream -> TCP
@@ -14,11 +14,11 @@ server.listen()
 
 
 # Shared Game States
-lobby = [] # (addr)
+lobby = {} # lobby_id -> addr
 
-usernames = {} # player_id -> username
-waiters = {} # lobby_id -> client socket
-clients = {} # player_id -> client socket
+usernames = {} # player_id -> username 
+waiters = {} # lobby_id -> client socket (these are connections that are in the lobby)
+clients = {} # player_id -> client socket (these are connections that have a game)
 games = {} # game_id -> game
 # game -> {0: ["hello", "world"], 1: ["hello", "world"]}
 
@@ -96,11 +96,11 @@ def recv_next_block(conn):
 def broadcast_state(game_id): # sends game to all connected clients in game
     with lock: # only one thread can read positions and counter at a time
         try:
-            send_packet(clients[game_id * 2], games[game_id])
+            send_packet(clients[game_id * 2], {"type" : "game", "data" : games[game_id]})
         except:
             pass
         try:
-            send_packet(clients[game_id * 2 + 1], games[game_id])
+            send_packet(clients[game_id * 2 + 1], {"type" : "game", "data" : games[game_id]})
         except:
             pass
 
@@ -109,16 +109,15 @@ def broadcast_state(game_id): # sends game to all connected clients in game
 def handle_client(conn, addr, player_id, game_id): # ran in another thread
     print(f"[NEW CONNECTION] {addr} connected as Player {player_id} with Game ID {game_id}.")
 
-    send_packet(conn, (player_id, games[game_id]))# sending player id to client who just connected
+    send_packet(conn, {"type" : "player_id", "data" : player_id})# sending player id to client who just connected
     # broadcast_state(game_id)
 
     user_id = player_id % 2
     while True:
-        # print(games)
-        # print(usernames)
+        print("WAITERS", waiters)
 
         try: # waiting to receive data from client
-            msg = recv_next_block(conn)
+            msg = recv_next_block(conn) 
             
             match msg:
                 case "READY":
@@ -158,11 +157,10 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
                     if msg[0] == "NAME":
                         with lock:
                             games[game_id][user_id]["name"] = msg[1]
-                    else:
+                    elif msg[0] == "HURT":
                         with lock:
-                            multiplier = msg[0]
                             damage = msg[1]
-                            games[game_id][user_id]["health"] -= multiplier * damage
+                            games[game_id][user_id]["health"] -= damage
                             games[game_id][user_id]["incoming"].pop(0)
                     
 
@@ -234,16 +232,14 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
 
 def broadcast_lobby():
     with lock:
-
         for waiter in waiters.values():
             try:
-                send_packet(waiter, lobby)
+                send_packet(waiter, {"type" : "lobby", "data" : lobby})
             except:
                 pass
 
 def handle_connection(conn, addr, lobby_id):
-    print(f"Merger")
-    send_packet(conn, lobby_id)
+    send_packet(conn, lobby_id) # sending lobby id to the client
 
     username = None
     game_id = None
@@ -251,6 +247,7 @@ def handle_connection(conn, addr, lobby_id):
 
     in_lobby = True
     while in_lobby:
+        # print("WAITERS", waiters)
 
         try:
                 
@@ -270,6 +267,7 @@ def handle_connection(conn, addr, lobby_id):
                     clients[player_id] = conn
 
                     in_lobby = False
+                    print("SOMEONE JOINED MY LOBBY")
 
 
             elif isinstance(msg, str):
@@ -278,7 +276,7 @@ def handle_connection(conn, addr, lobby_id):
                     lobby[lobby_id][2] = msg # addr, lobby id (-1 if none), username
             
             
-            elif isinstance(msg, int): # chose a lobby and gives lobby index
+            elif isinstance(msg, int): # chose a lobby and gives lobby id
                 with lock: # msg is lobby both players join
                     # change lobby they both are in from -1 to their game id
                     # del waiters[lobby_id]
@@ -296,6 +294,7 @@ def handle_connection(conn, addr, lobby_id):
 
                     # identify the game is being created so dont take it
                     games[game_id] = copy.deepcopy(new_game)
+                    print("GAMES", games)
 
                     in_lobby = False
 
@@ -307,31 +306,43 @@ def handle_connection(conn, addr, lobby_id):
     
 
     
-    # Finished the lobby
+    # Finished the lobby for one client
     # we got player_id, game_id, username
+    
 
+    # removing players from the lobby
+    for lobby_id, waiter in waiters.items():
+        if waiter == conn:
+            with lock:
+                del waiters[lobby_id]
+                del lobby[lobby_id]
+                break
+                
+    # need to broadcast lobby one more time when you are last player to join the game
+    broadcast_lobby()
 
     handle_client(conn, addr, player_id, game_id)
 
 
     # Deleting lobby at the end
 
-
+def produce_lobby_id() -> int:
+    for i in range(len(lobby) + 1): # lobby id within size of lobby + 1
+        if i not in lobby:
+            return i # lobby id
+        
 
 def main():
     print("[STARTING] Lobby is running...")
-    lobby_id = 0
     while True:
         conn, addr = server.accept() # when client connects it gets this
         # waits here until it gets a connection
-
-        waiters[lobby_id] = conn
-        lobby.append([addr, -1, "No Name"]) # idx is current lobby [addr, lobby joined, username]
-
+        lobby_id = produce_lobby_id()
+        waiters[lobby_id] = conn # shouldnt pass socket so other holder
+        lobby[lobby_id] = [addr, -1, "No Name"] # lobby_id is current lobby [addr, lobby joined, username]
         threading.Thread(target=handle_connection, args=(conn, addr, lobby_id), daemon=True).start()
 
 
-        lobby_id += 1
 
 
 if __name__ == "__main__":

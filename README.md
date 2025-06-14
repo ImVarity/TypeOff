@@ -53,3 +53,13 @@
 ### Having two different players join the same game
 ### Solution
     This took forever to think of, but I would have the user click on who they wanted to play against and the client would send that lobby_id to the server and change the status of both players to the game_id that would would be in together (this is the idea that took a while. I didn't know how to communicate that they were both in the same room). The server would create a new game and new player_id and then leave the lobby handler while loop. The player that didn't click would have to see that someone joined their lobby, because of their new game_id in their lobby instance, and get their own player_id then leave the while loop.
+
+<br><br>
+
+
+## __Problem__
+### Players would stay in lobby after joining game
+### Solution
+    It wasn't that bad, but I simple delete them from the lobby. However, for some reason the lobby wouldn't show that the others who have a game have left the lobby... I needed to broadcast the lobby one more time before handling the game. When handing the game it only starts to send the game - not the lobby anymore.
+
+

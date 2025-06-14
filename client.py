@@ -40,7 +40,7 @@ cursor = [0, 0]
 hostname = socket.gethostname()
 local_ip = socket.gethostbyname(hostname)
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client.connect((local_ip, 7778))
+client.connect((local_ip, 7777))
 
 
 lock = threading.Lock()
@@ -64,6 +64,9 @@ clock = pygame.time.Clock()
 
 player_id = None # player_id from server | 0 ... N
 client_id = None # player_id in the game on client | 0 or 1
+
+# game
+in_game = False
 
 # lobby
 lobby = None
@@ -126,34 +129,37 @@ def receive_state(): # handes lobby and game now
         try:
             
             data = recv_next_block(client)
-            if isinstance(data, list):
-                with lock:
-                    lobby = data
-            
-            if isinstance(data, tuple): # player id was passed
-                with lock:
-                    player_id = data[0]
-                    client_id = player_id % 2
-                    game = data[1]
+
+            if isinstance(data, dict) and "type" in data:
+                if data["type"] == "lobby":
+                    with lock:
+                        lobby = data["data"]
+                        print("got lobby")
+                elif data["type"] == "game":
+                    with lock:
+                        game = data["data"]
+                        # USER DATA
+                        buffer = game[player_id % 2]["buffer"]
+                        buffer_def = game[player_id % 2]["incoming"][0][0] if len(game[player_id % 2]["incoming"]) > 0 else None
+                        mode = game[player_id % 2]["mode"]
+                        health = game[player_id % 2]["health"]
+                        multiplier = game[player_id % 2]["multiplier"]
 
 
-        
-            elif isinstance(data, dict): # its the game
-                with lock:
-                    game = data
-                    # USER DATA
-                    buffer = game[player_id % 2]["buffer"]
-                    buffer_def = game[player_id % 2]["incoming"][0][0] if len(game[player_id % 2]["incoming"]) > 0 else None
-                    mode = game[player_id % 2]["mode"]
-                    health = game[player_id % 2]["health"]
-                    multiplier = game[player_id % 2]["multiplier"]
+                        # OPPONENT DATA
+                        mode_opp = game[not player_id % 2]["mode"]
+                        health_opp = game[not player_id % 2]["health"]
+                        multiplier_opp = game[not player_id % 2]["multiplier"]
+                        username_opp = game[not player_id % 2]["name"]
+                
+                elif data["type"] == "player_id": # player id was passed
+                    with lock:
+                        player_id = data["data"]
+                        client_id = player_id % 2
+                        # game = data[1]
 
 
-                    # OPPONENT DATA
-                    mode_opp = game[not player_id % 2]["mode"]
-                    health_opp = game[not player_id % 2]["health"]
-                    multiplier_opp = game[not player_id % 2]["multiplier"]
-                    username_opp = game[not player_id % 2]["name"]
+                    
             
 
         except Exception as e:
@@ -167,12 +173,12 @@ def receive_state(): # handes lobby and game now
 delta_time = float(1/MAX_FPS)
 def main():
     global delta_time, lobby_id, username, username_submitted, cursor, client_id
+    global in_game
 
     lobby_id = recv_next_block(client)
     threading.Thread(target=receive_state, daemon=True).start()
     send_packet(client, "HI")
     
-    in_game = False
     run = True
 
     while run:
@@ -191,6 +197,7 @@ def main():
                 return
 
 
+
             # HANLDES LOBBY STUFF
             if not in_game:
                 if event.type == pygame.KEYDOWN:
@@ -204,22 +211,38 @@ def main():
 
 
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    for i in range(len(lobby)):
-                        if i == lobby_id or lobby[i][2] == "No Name":
-                            continue
+                    box_width = 220
+                    box_height = 60
+                    gap_y = 20
+                    start_x_left = 50
+                    start_x_right = WIDTH - box_width - 50
+                    start_y = 100
 
-                        name = lobby[i][2]
-                        text_surface = font.render(name, True, (255, 255, 255))
-                        rect = pygame.Rect(0, 100 + i * 40, WIDTH, text_surface.get_height())
+                    visible_players = [id for id in sorted(lobby.keys()) if lobby[id][2] != "No Name"]
+                    visible_players = visible_players[:8]  # show only first 8
+
+                    for i, id in enumerate(visible_players):
+                        if id == lobby_id:
+                            continue  # don't click on yourself
+
+                        col = i // 4
+                        row = i % 4
+                        x = start_x_left if col == 0 else start_x_right
+                        y = start_y + row * (box_height + gap_y)
+                        rect = pygame.Rect(x, y, box_width, box_height)
+
                         if rect.collidepoint(cursor):
-                            send_packet(client, i)
-                            print("Joined lobby", i)
+                            send_packet(client, id)
+                            print("Joined lobby", id)
             
             # HANDLES GAME STUFF
             if in_game:
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_SPACE:
                         send_packet(client, "READY")
+                
+                    if event.key == pygame.K_RETURN:
+                        send_packet(client, "MODE")
 
             
 
@@ -293,7 +316,7 @@ def main():
 
         if len(game[player_id % 2]["incoming"]) > 0 and game[player_id % 2]["incoming"][0][1] > 550:
             # if passes your side deal (multiplier * damage)
-            send_packet(client, (multiplier_opp, DAMAGE)) 
+            send_packet(client, ("HURT", len(game[player_id % 2]["incoming"][0][0]) * multiplier_opp)) 
 
 
         # declare winner
@@ -315,28 +338,50 @@ def main():
     client.close()
 
 def draw_lobby():
-    window.fill((0, 0, 0))  # black background
-
+    window.fill((20, 20, 20))  # dark background
 
     title = font.render("Lobby", True, (255, 255, 255))
     window.blit(title, (WIDTH // 2 - title.get_width() // 2, 30))
-    # print("LOBBY", lobby)
-    for i in range(len(lobby)):
-        if lobby[i][2] == "No Name":
-            continue
-        room = lobby[i]
-        name = room[2]
-        user_text = font.render(name, True, (200, 200, 200))
 
-        # background when hovered
-        hover_block = pygame.Rect(0, 100 + i * 40, WIDTH, user_text.get_height())
-        pygame.draw.rect(window, (255, 255, 255) if cursor[1] >= 100 + i * 40 and cursor[1] <= 100 + i * 40 + user_text.get_height() else (0, 0 ,0), hover_block)
-        
-        # the lobby
-        window.blit(user_text, (WIDTH // 2 - user_text.get_width() // 2, 100 + i * 40))  # spacing between names
+    box_width = 220
+    box_height = 60
+    gap_y = 20
+    start_x_left = 50
+    start_x_right = WIDTH - box_width - 50
+    start_y = 100
+
+    visible_players = [id for id in sorted(lobby.keys()) if lobby[id][2] != "No Name"]
+    visible_players = visible_players[:8]  # show only first 8
+
+    for i, id in enumerate(visible_players):
+        room = lobby[id]
+        name = room[2]
+
+        # left column for first 4, right column for next 4
+        col = i // 4
+        row = i % 4
+        x = start_x_left if col == 0 else start_x_right
+        y = start_y + row * (box_height + gap_y)
+
+        box_rect = pygame.Rect(x, y, box_width, box_height)
+
+        # color depending on whether it's the current user
+        is_me = id == lobby_id
+        box_color = (100, 0, 0) if is_me else (40, 40, 40)
+        border_color = (255, 0, 0) if is_me else (255, 255, 255)
+
+        # highlight on hover
+        if box_rect.collidepoint(cursor):
+            box_color = (50, 0, 0) if is_me else (80, 80, 80) 
+
+        pygame.draw.rect(window, box_color, box_rect)
+        pygame.draw.rect(window, border_color, box_rect, 2)
+
+        name_text = font.render(name, True, (255, 255, 255))
+        window.blit(name_text, (x + box_width // 2 - name_text.get_width() // 2,
+                                y + box_height // 2 - name_text.get_height() // 2))
 
     pygame.display.update()
-
 
 name_blink = 0
 name_blink_show = False
