@@ -23,7 +23,7 @@ games = {} # game_id -> game
 # game -> {0: ["hello", "world"], 1: ["hello", "world"]}
 
 library = {}
-book = "harry-potter"
+book = "short-list"
 book_tokens = []
 
 with open("library.json", "r") as f:
@@ -114,8 +114,6 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
 
     user_id = player_id % 2
     while True:
-        print("WAITERS", waiters)
-
         try: # waiting to receive data from client
             msg = recv_next_block(conn) 
             
@@ -126,7 +124,7 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
                 case "HI":
                     with lock:
                         pass
-                        # print("hellooooo")
+
                 
                 case "INCOMING":
                     with lock:
@@ -170,11 +168,13 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
                         if games[game_id][user_id]["incoming"][0][0] == "": # empty
                             games[game_id][user_id]["incoming"].pop(0)
 
-                case "ATTACK": # send words
+                case "ATTACK": # send words (this removes the letter typed from the buffer)
                     with lock:
                         games[game_id][user_id]["buffer"] = games[game_id][user_id]["buffer"][1:]
-                        if games[game_id][user_id]["buffer"] == "": # buffer is empty
 
+                        # handles when typed final word in buffer
+                        if games[game_id][user_id]["buffer"] == "": # buffer is empty
+                            
                             popped = games[game_id][user_id]["text"].pop(0) # remove last element in text
                             games[game_id][not (user_id)]["incoming"].append([popped, 22, 550]) # pass first element to incoming for opponent [word, top right]
                             

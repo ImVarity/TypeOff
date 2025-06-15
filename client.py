@@ -10,19 +10,22 @@ VEL = 5
 MAX_FPS = 60
 DAMAGE = 40
 
+BLACK = (0, 0, 0)
 GREEN = (255, 127, 127)
 RED = (118, 242, 104)
 AQUA = (0, 175, 185)
 LIGHTRED = (240, 113, 103)
 SAIL = (254, 217, 183)
+PURPLE = (135, 88, 255)
+GREY_WHITE = (242, 242, 242)
 
 # if mode on words
-FOCUS_COLOR = LIGHTRED
-UNFOCUS_COLOR = (255, 160, 150)
+FOCUS_COLOR = PURPLE
+UNFOCUS_COLOR = GREY_WHITE
 
 SEASHELL = (255, 245, 238)
 
-BACKGROUND_COLOR = SEASHELL
+BACKGROUND_COLOR = GREY_WHITE
 
 
 OPP_FOCUS_COLOR = AQUA
@@ -320,7 +323,12 @@ def main():
 
 
         # declare winner
+
+        # killed the opp
         if game[not player_id % 2]["health"] <= 0:
+            send_packet(client, "WINNER")
+        # typed all the words
+        if len(game[client_id]["text"]) <= 2:
             send_packet(client, "WINNER")
 
         
@@ -425,13 +433,18 @@ def draw_user():
     text = font.render(buffer, True, FOCUS_COLOR if mode else UNFOCUS_COLOR)
     window.blit(text, (x_word, y_word))
 
-    # MULTIPLIER ABOVE PEEK WORD
-    multi = font.render(f"x{multiplier}", True, (0, 0, 0))
-    window.blit(multi, (250, HEIGHT // 2 + HEIGHT // 6 - 27))
+    # MULTIPLIER ABOVE HEALTH
+    multi = font.render(f"x{multiplier}", True, (FOCUS_COLOR))
+    window.blit(multi, (WIDTH // 2 - multi.get_width() // 2, HEIGHT // 2))
+    # window.blit(multi, (250, HEIGHT // 2 + HEIGHT // 6 - 27))
+
+    # WORDS LEFT
+    word_count = font.render(f"{len(game[client_id]["text"]) - 2}", True, (FOCUS_COLOR)) # -2 because the last words are "you", "won"
+    window.blit(word_count, (WIDTH // 2 - word_count.get_width() // 2, 275))
 
     # PEEK WORD PLACED AT MIDDLE BOTTOM
     peek = font.render(game[player_id % 2]["peek"], True, FOCUS_COLOR if mode else UNFOCUS_COLOR)
-    window.blit(peek, (250, HEIGHT // 2 + HEIGHT // 6))
+    window.blit(peek, (200, 350))
 
     # INCOMING WORDS TOP RIGHT
     for buf, y, z in game[player_id % 2]["incoming"]:
@@ -440,8 +453,13 @@ def draw_user():
 
 
     # HEALTH BAR BOTTOM
+    # percentage = health / 500 # temporary
+    # health_bar = pygame.Rect(0, 580, percentage * 600, 20)
+    # pygame.draw.rect(window, FOCUS_COLOR, health_bar)
+
+
     percentage = health / 500 # temporary
-    health_bar = pygame.Rect(0, 580, percentage * 600, 20)
+    health_bar = pygame.Rect(200, 325, percentage * 200, 25)
     pygame.draw.rect(window, FOCUS_COLOR, health_bar)
 
 
@@ -454,9 +472,9 @@ def draw_opp():
     text = font.render(game[not player_id % 2]["buffer"], True, OPP_FOCUS_COLOR if mode_opp else OPP_UNFOCUS_COLOR)
     window.blit(text, (x_word, y_word - text.get_height()))
 
-    # PEEK WORD PLACED AT MIDDLE TOP
-    peek = font.render(game[not player_id % 2]["peek"], True, OPP_FOCUS_COLOR if mode_opp else OPP_UNFOCUS_COLOR)
-    window.blit(peek, (250, HEIGHT // 4))
+    # # PEEK WORD PLACED AT MIDDLE TOP
+    # peek = font.render(game[not player_id % 2]["peek"], True, OPP_FOCUS_COLOR if mode_opp else OPP_UNFOCUS_COLOR)
+    # window.blit(peek, (250, HEIGHT // 4))
 
     # OUTGOING WORDS BOTTOM LEFT
     for buf, y, z in game[not player_id % 2]["incoming"]:
@@ -465,8 +483,12 @@ def draw_opp():
 
     # HEALTH BAR TOP
     percentage = health_opp / 500 # temporary
-    health_bar = pygame.Rect(0, 0, percentage * 600, 20)
+    health_bar = pygame.Rect(200, 250, percentage * 200, 25)
     pygame.draw.rect(window, OPP_FOCUS_COLOR, health_bar)
+
+
+    # health_bar = pygame.Rect(0, 0, percentage * 600, 20)
+    # pygame.draw.rect(window, OPP_FOCUS_COLOR, health_bar)
 
 
 reset_wait = 3 # seconds
