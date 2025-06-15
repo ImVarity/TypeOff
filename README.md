@@ -62,4 +62,11 @@
 ### Solution
     It wasn't that bad, but I simple delete them from the lobby. However, for some reason the lobby wouldn't show that the others who have a game have left the lobby... I needed to broadcast the lobby one more time before handling the game. When handing the game it only starts to send the game - not the lobby anymore.
 
+<br><br>
+
+
+## __Problem__
+### Let players return to lobby
+### Solution
+    My lobby and my game in the server is handled by two different loops... So once you join a game and leave the lobby loop you cant really join the lobby again. I just wrapped both loops around another while loop which let players return to the lobby when they press ESC. Make sure to broadcast the lobby again after that so the other players see the update.
 

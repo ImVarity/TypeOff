@@ -43,7 +43,7 @@ cursor = [0, 0]
 hostname = socket.gethostname()
 local_ip = socket.gethostbyname(hostname)
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client.connect((local_ip, 7777))
+client.connect((local_ip, 7778))
 
 
 lock = threading.Lock()
@@ -201,6 +201,7 @@ def main():
 
 
 
+
             # HANLDES LOBBY STUFF
             if not in_game:
                 if event.type == pygame.KEYDOWN:
@@ -246,6 +247,13 @@ def main():
                 
                     if event.key == pygame.K_RETURN:
                         send_packet(client, "MODE")
+                    
+                    if event.key == pygame.K_ESCAPE:
+                        print("HELLO PEOPLE OF AMERICA")
+                        in_game = False
+                        with lock:
+                            lobby.clear()  # instead of setting it to None
+                        send_packet(client, "RETURN TO LOBBY")
 
             
 
@@ -255,7 +263,7 @@ def main():
                 draw_info()
                 continue
             
-            if lobby and lobby[lobby_id][1] != -1:
+            if lobby is not None and lobby_id in lobby and lobby[lobby_id][1] != -1:
                 in_game = True
                 send_packet(client, "JOIN")
                 print("Lobby ready. Entering game...")
@@ -415,6 +423,7 @@ def draw_window():
     # print(game)
     window.fill(BACKGROUND_COLOR)
 
+
     # me
     draw_user()
 
@@ -517,6 +526,9 @@ def waiting_screen():
         show = not show
 
     window.fill((255, 255, 255))
+    return_to_lobby_text = font.render(f"ESC to lobby", True, (0, 0, 0))
+    if t == 1:
+        window.blit(return_to_lobby_text, (20, 50 - return_to_lobby_text.get_height()))
     
     ## YOU BOTTOM LEFT
     text = font.render(f"{username}", True, (0, 0, 0))

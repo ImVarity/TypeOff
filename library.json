@@ -12,7 +12,9 @@
     "always", "you", "must", "not", "tell", "lies", "happiness", "can", "be", "found", "even", 
     "in", "the", "darkest", "of", "times", "if", "one", "only", "remembers", "to", "turn", "on", 
     "the", "light", "we", "are", "only", "as", "strong", "as", "we", "are", "united", "as", "weak", 
-    "as", "we", "are", "divided"]
+    "as", "we", "are", "divided", "you", "win"],
+
+    "short-list" : ["hello", "world", "this", "is", "the", "short", "list", "you", "win"]
 
 }
     
