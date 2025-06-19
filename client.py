@@ -43,7 +43,7 @@ cursor = [0, 0]
 hostname = socket.gethostname()
 local_ip = socket.gethostbyname(hostname)
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client.connect((local_ip, 7778))
+client.connect((local_ip, 7777))
 
 
 lock = threading.Lock()
@@ -93,8 +93,45 @@ multiplier_opp = 1
 
 
 # shared data
-players = {}
 game = None
+
+
+def print_debug_state():
+    print("=== DEBUG STATE ===")
+
+    # Lobby Info
+    print(f"[Lobby]")
+    print(f"  lobby_id       : {lobby_id}")
+    print(f"  lobby          : {lobby}")
+
+    # Player Identifiers
+    print(f"\n[Player IDs]")
+    print(f"  player_id      : {player_id}")
+    print(f"  client_id      : {client_id}")
+    print(f"  in_game        : {in_game}")
+
+    # User Info
+    print(f"\n[User]")
+    print(f"  username             : {username}")
+    print(f"  username_submitted   : {username_submitted}")
+    print(f"  buffer               : {buffer}")
+    print(f"  buffer_def           : {buffer_def}")
+    print(f"  health               : {health}")
+    print(f"  mode                 : {mode}")
+    print(f"  multiplier           : {multiplier}")
+
+    # Opponent Info
+    print(f"\n[Opponent]")
+    print(f"  username_opp         : {username_opp}")
+    print(f"  health_opp           : {health_opp}")
+    print(f"  mode_opp             : {mode_opp}")
+    print(f"  multiplier_opp       : {multiplier_opp}")
+
+    # Game Shared State
+    print(f"\n[Game]")
+    print(f"  game                 : {game}")
+
+    print("====================\n")
 
 def send_packet(conn, obj):
     try:
@@ -122,7 +159,7 @@ def recv_next_block(conn):
     return loaded_data
 
 def receive_state(): # handes lobby and game now
-    global player_id, client_id
+    global player_id, client_id, lobby_id
     global lobby
     global game
     global mode, buffer, buffer_def, health, multiplier
@@ -132,37 +169,43 @@ def receive_state(): # handes lobby and game now
         try:
             
             data = recv_next_block(client)
+            if not isinstance(data, dict) or "type" not in data:
+                continue
 
-            if isinstance(data, dict) and "type" in data:
-                if data["type"] == "lobby":
-                    with lock:
-                        lobby = data["data"]
-                        print("got lobby")
-                elif data["type"] == "game":
-                    with lock:
-                        game = data["data"]
-                        # USER DATA
-                        buffer = game[player_id % 2]["buffer"]
-                        buffer_def = game[player_id % 2]["incoming"][0][0] if len(game[player_id % 2]["incoming"]) > 0 else None
-                        mode = game[player_id % 2]["mode"]
-                        health = game[player_id % 2]["health"]
-                        multiplier = game[player_id % 2]["multiplier"]
+            type = data["type"]
+            batch = data["data"]
+
+            with lock:
+                if type == "lobby":
+                    lobby = batch
+                elif type == "game":
+                    game = batch
+                    buffer = game[player_id % 2]["buffer"]
+                    buffer_def = game[player_id % 2]["incoming"][0][0] if len(game[player_id % 2]["incoming"]) > 0 else None
+                    mode = game[player_id % 2]["mode"]
+                    health = game[player_id % 2]["health"]
+                    multiplier = game[player_id % 2]["multiplier"]
 
 
-                        # OPPONENT DATA
-                        mode_opp = game[not player_id % 2]["mode"]
-                        health_opp = game[not player_id % 2]["health"]
-                        multiplier_opp = game[not player_id % 2]["multiplier"]
-                        username_opp = game[not player_id % 2]["name"]
+                    # OPPONENT DATA
+                    mode_opp = game[not player_id % 2]["mode"]
+                    health_opp = game[not player_id % 2]["health"]
+                    multiplier_opp = game[not player_id % 2]["multiplier"]
+                    username_opp = game[not player_id % 2]["name"]
+
+                elif type == "lobby":
+                    lobby = batch
                 
-                elif data["type"] == "player_id": # player id was passed
-                    with lock:
-                        player_id = data["data"]
-                        client_id = player_id % 2
-                        # game = data[1]
+                elif type == "game":
+                    game = batch
+                
+                elif type == "player_id":
+                    player_id = batch
+                    client_id = player_id % 2
 
-
-                    
+                elif type == "lobby_id":
+                    lobby_id = batch
+          
             
 
         except Exception as e:
@@ -176,15 +219,19 @@ def receive_state(): # handes lobby and game now
 delta_time = float(1/MAX_FPS)
 def main():
     global delta_time, lobby_id, username, username_submitted, cursor, client_id
-    global in_game
+    global in_game, lobby
 
-    lobby_id = recv_next_block(client)
+    # the first thing sent should be the lobby_id
+    first = recv_next_block(client)
+    if isinstance(first, dict) and first.get("type") == "lobby_id":
+        lobby_id = first["data"]
     threading.Thread(target=receive_state, daemon=True).start()
     send_packet(client, "HI")
     
     run = True
 
     while run:
+        # print_debug_state()
         delta_time = clock.tick(MAX_FPS) / 1000
         cursor[0], cursor[1] = pygame.mouse.get_pos()
         character = None
@@ -237,7 +284,9 @@ def main():
 
                         if rect.collidepoint(cursor):
                             send_packet(client, id)
-                            print("Joined lobby", id)
+                            in_game = False
+
+
             
             # HANDLES GAME STUFF
             if in_game:
@@ -249,36 +298,40 @@ def main():
                         send_packet(client, "MODE")
                     
                     if event.key == pygame.K_ESCAPE:
-                        print("HELLO PEOPLE OF AMERICA")
-                        in_game = False
                         with lock:
-                            lobby.clear()  # instead of setting it to None
-                        send_packet(client, "RETURN TO LOBBY")
+                            send_packet(client, "RETURN TO LOBBY")
+
+                            lobby.clear()
+                            game.clear()
+                            in_game = False
+
+                            continue
 
             
-
 
         if not in_game:
             if not username_submitted:
                 draw_info()
                 continue
-            
-            if lobby is not None and lobby_id in lobby and lobby[lobby_id][1] != -1:
+            if lobby_id in lobby and lobby[lobby_id][1] != -1:
                 in_game = True
-                send_packet(client, "JOIN")
-                print("Lobby ready. Entering game...")
-                continue
+                send_packet(client, "JOIN") 
+                # print("Lobby ready. Entering game...")
+
 
             draw_lobby()
             # print("waiting in lobby")
             continue
-
+        
 
         
         if game is None or player_id is None:
             print("waiting for game")
             # send_packet(client, "HI")
             continue
+            
+        if game:
+            lobby.clear()
 
 
         # make em wait if bath aren't ready yet
@@ -355,6 +408,7 @@ def main():
 
 def draw_lobby():
     window.fill((20, 20, 20))  # dark background
+    # print("DRAWING", lobby)
 
     title = font.render("Lobby", True, (255, 255, 255))
     window.blit(title, (WIDTH // 2 - title.get_width() // 2, 30))
@@ -371,7 +425,8 @@ def draw_lobby():
 
     for i, id in enumerate(visible_players):
         room = lobby[id]
-        name = room[2]
+        name = room[2] # + " " + str(id) use for debugging
+
 
         # left column for first 4, right column for next 4
         col = i // 4
@@ -383,12 +438,12 @@ def draw_lobby():
 
         # color depending on whether it's the current user
         is_me = id == lobby_id
-        box_color = (100, 0, 0) if is_me else (40, 40, 40)
-        border_color = (255, 0, 0) if is_me else (255, 255, 255)
+        box_color = AQUA if is_me else (40, 40, 40)
+        border_color = (255, 255, 255)
 
         # highlight on hover
         if box_rect.collidepoint(cursor):
-            box_color = (50, 0, 0) if is_me else (80, 80, 80) 
+            box_color = (0, 200, 205) if is_me else (80, 80, 80) 
 
         pygame.draw.rect(window, box_color, box_rect)
         pygame.draw.rect(window, border_color, box_rect, 2)

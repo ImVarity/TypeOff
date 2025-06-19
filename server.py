@@ -5,7 +5,7 @@ import json
 import copy
 
 HOST = '0.0.0.0' # any machine on same network can join '127.0.0.1' for only my machine
-PORT = 7778
+PORT = 7777
 
 # standard block setup
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # af_inet -> IPv4 | sock_stream -> TCP
@@ -15,12 +15,13 @@ server.listen()
 
 # Shared Game States
 lobby = {} # lobby_id -> addr
-
+next_lobby_id = 0
 usernames = {} # player_id -> username 
 waiters = {} # lobby_id -> client socket (these are connections that are in the lobby)
 clients = {} # player_id -> client socket (these are connections that have a game)
 games = {} # game_id -> game
 # game -> {0: ["hello", "world"], 1: ["hello", "world"]}
+next_game_id = 0
 
 library = {}
 book = "short-list"
@@ -115,6 +116,7 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
     # broadcast_state(game_id)
 
     user_id = player_id % 2
+    returning_to_lobby = False
     in_game = True
     while in_game:
         try: # waiting to receive data from client
@@ -219,9 +221,18 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
                 case "RETURN TO LOBBY": # send back to lobby
                     # send to while loop on outsides
                     with lock:
-                        games[game_id][user_id]["location"] = "lobby"
-                        games[game_id][not (user_id)]["location"] = "lobby"
-                        return
+                        games[game_id][user_id]["location"] = "lobby" # return myself to lobby
+                        in_game = False
+                        returning_to_lobby = True
+                        # games[game_id][not user_id]["location"] = "lobby" # return myself to lobby
+                    # returning_to_lobby = True
+                    # in_game = False
+                
+                case "LEAVE":
+                    with lock:
+                        games[game_id][user_id]["location"] = "lobby" # return myself to lobby
+                        returning_to_lobby = True
+                        in_game = False
 
                         
             broadcast_state(game_id) # after updates, send full game state to every connected client
@@ -229,7 +240,8 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
         except:
             break
         
-    
+    if returning_to_lobby:
+        return
     # client disconnected
     print(f"[DISCONNECT] {addr} disconnected.")
     conn.close()
@@ -254,38 +266,38 @@ def handle_connection(conn, addr, lobby_id):
     connected = True
     username = None
     while connected:
-        send_packet(conn, lobby_id) # sending lobby id to the client
-        broadcast_lobby() # sends the lobby after potentially returning to lobby
-
+        if lobby_id in lobby:
+            send_packet(conn, {"type": "lobby_id", "data": lobby_id}) # sending lobby id to the client
+            broadcast_lobby() # sends the lobby after potentially returning to lobby
 
         game_id = None
         player_id = None
 
         in_lobby = True
         while in_lobby:
+            print(lobby)
             # print("WAITERS", waiters)
 
             try:
                     
                 msg = recv_next_block(conn)
 
-                # once here, opp joined the lobby and is waiting for you to load in
                 
                 if msg == "HI":
                     print("HELLO")
                 
+
                 elif msg == "JOIN": # when someone joined their lobby, they have to know too
                     with lock:
-                        # del waiters[lobby_id]
-
                         game_id = lobby[lobby_id][1]
-                        player_id = game_id * 2
+                        player_id = game_id * 2 + 1
+                            
                         clients[player_id] = conn
 
-                        games[game_id][not (player_id % 2)]["location"] = "game"
+                        games[game_id][player_id % 2]["location"] = "game"
                         in_lobby = False
 
-                        print("SOMEONE JOINED MY LOBBY")
+                        print("SOMEONE JOINED MY LOBBY HERE", player_id)
 
 
                 elif isinstance(msg, str):
@@ -297,24 +309,24 @@ def handle_connection(conn, addr, lobby_id):
                 elif isinstance(msg, int): # chose a lobby and gives lobby id
                     with lock: # msg is lobby both players join
                         # change lobby they both are in from -1 to their game id
-                        # del waiters[lobby_id]
-
-                        game_id = len(games) + 1
-                        lobby[lobby_id][1] = game_id
-                        player_id = game_id * 2 + 1
+                        me_id = lobby_id
+                        opp_id = msg
+                        game_id = produce_game_id()
+                        lobby[me_id][1] = game_id
+                        player_id = game_id * 2
 
                         # opp that needs to chckec
-                        lobby[msg][1] = game_id
+                        lobby[opp_id][1] = game_id
 
                         # identify in client your playerid
                         clients[player_id] = conn
-
 
                         # identify the game is being created so dont take it
                         games[game_id] = copy.deepcopy(new_game)
                         games[game_id][player_id % 2]["location"] = "game"
 
                         in_lobby = False
+                        
 
                 broadcast_lobby()
 
@@ -329,36 +341,47 @@ def handle_connection(conn, addr, lobby_id):
         
 
         # removing players from the lobby
-        for lobby_id, waiter in waiters.items():
-            if waiter == conn:
+        for lid, waiter in list(waiters.items()):
+            if waiter is conn:
                 with lock:
-                    del waiters[lobby_id]
-                    del lobby[lobby_id]
-                    break
-                    
+                    del waiters[lid]
+                    del lobby[lid]
+                break
+                
         # need to broadcast lobby one more time when you are last player to join the game
         broadcast_lobby()
 
         handle_client(conn, addr, player_id, game_id)
 
+        print("out of client")
+
         # send back to the lobby...
+        # send player back to lobby if they left the game...
         if games[game_id][player_id % 2]["location"] == "lobby":
             with lock:
-                lobby_id = produce_lobby_id()
-                waiters[lobby_id] = conn
-                lobby[lobby_id] = [addr, -1, username]
+                # give this connection a new lobby slot
+                new_lobby_id = produce_lobby_id()
+                lobby_id = new_lobby_id
+                waiters[new_lobby_id] = conn
+                lobby[new_lobby_id]  = [addr, -1, username]
                 continue
+            
         
         # disconnected
         break
 
 
-
+def produce_game_id() -> int:
+    global next_game_id
+    gid = next_game_id
+    next_game_id += 1
+    return gid
 
 def produce_lobby_id() -> int:
-    for i in range(len(lobby) + 1): # lobby id within size of lobby + 1
-        if i not in lobby:
-            return i # lobby id
+    global next_lobby_id
+    lid = next_lobby_id
+    next_lobby_id += 1
+    return lid
         
 
 def main():

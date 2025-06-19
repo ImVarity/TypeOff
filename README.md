@@ -70,3 +70,10 @@
 ### Solution
     My lobby and my game in the server is handled by two different loops... So once you join a game and leave the lobby loop you cant really join the lobby again. I just wrapped both loops around another while loop which let players return to the lobby when they press ESC. Make sure to broadcast the lobby again after that so the other players see the update.
 
+<br><br>
+
+
+## __Problem__
+### Players joining game after returning to lobby was bugged
+### Solution
+    This actually took years off my life trying to figure out where the problem lied. At first the problem was that players weren't returning to the lobby at the same time.. For some reason they'd return to the lobby sometimes and then the wouldn't be able to join again togther. So I gave in and allowed players to return to the lobby by themselves without prompting the other one to join. This worked... only for the first client though. ONCE THE SECOND CLIENT TRIED JOINING A GAME IT BROKE. Whenver the second client joined, the other client would join the game, their name was deleted from the lobby, and the client that clicked wouldn't join anything. They were both still stuck in the lobby. I could not find out where the problem was. I printed out every variable my game had... I almost wanted to give up and let the game be broken because it was just that one specific test case. After like a week, I found it. The problem was that my produce_lobby_id() function was flawed... When both clients returned to the lobby, they would get an id from ids that have been deleted already. I assumed that this was okay... However, there would be a small window one client could grab the lobby_id 0 while one of threads was still using that lobby_id... FINALLY I FOUND IT. I think I can now find a way for both players to leave at the same time now once someone exits.
