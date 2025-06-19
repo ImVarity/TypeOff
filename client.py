@@ -242,6 +242,7 @@ def main():
                 character = click
 
             if event.type == pygame.QUIT:
+                send_packet(client, "DISCONNECT")
                 pygame.quit()
                 client.close()
                 return
@@ -336,6 +337,15 @@ def main():
 
         # make em wait if bath aren't ready yet
         draw_window() if game["start"][0] and game["start"][1] else waiting_screen()
+
+        if (game[not player_id % 2]["location"] == "lobby" or
+            game[not player_id % 2]["location"] == "disconnect"): # return if other player returned or disconneced
+            send_packet(client, "RETURN TO LOBBY")
+            lobby.clear()
+            game.clear()
+            in_game = False
+
+            continue
 
 
         if game["winner"] != -1:

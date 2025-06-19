@@ -233,6 +233,13 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
                         games[game_id][user_id]["location"] = "lobby" # return myself to lobby
                         returning_to_lobby = True
                         in_game = False
+                
+                case "DISCONNECT": # user exited game while in game
+                    print("I PRESSED EXIT")
+                    with lock:
+                        games[game_id][user_id]["location"] = "disconnect"
+                        send_packet(clients[game_id * 2 + user_id], {"type": "game", "data": games[game_id]})
+
 
                         
             broadcast_state(game_id) # after updates, send full game state to every connected client
@@ -242,18 +249,13 @@ def handle_client(conn, addr, player_id, game_id): # ran in another thread
         
     if returning_to_lobby:
         return
-    # client disconnected
+
     print(f"[DISCONNECT] {addr} disconnected.")
-    conn.close()
-    with lock:
-        del clients[player_id]
-        del games[game_id]
-    broadcast_state(game_id)
 
 
 def broadcast_lobby():
     with lock:
-        print("broadcasting lobby")
+        print("broadcasting lobby", lobby)
         for waiter in waiters.values():
             try:
                 send_packet(waiter, {"type" : "lobby", "data" : lobby})
@@ -261,7 +263,6 @@ def broadcast_lobby():
                 pass
 
 def handle_connection(conn, addr, lobby_id):
-
 
     connected = True
     username = None
@@ -272,7 +273,6 @@ def handle_connection(conn, addr, lobby_id):
 
         game_id = None
         player_id = None
-
         in_lobby = True
         while in_lobby:
             print(lobby)
@@ -298,6 +298,10 @@ def handle_connection(conn, addr, lobby_id):
                         in_lobby = False
 
                         print("SOMEONE JOINED MY LOBBY HERE", player_id)
+                
+                elif msg == "DISCONNECT": # user exited game while in lobby
+                    connected = False
+                    break
 
 
                 elif isinstance(msg, str):
@@ -326,6 +330,7 @@ def handle_connection(conn, addr, lobby_id):
                         games[game_id][player_id % 2]["location"] = "game"
 
                         in_lobby = False
+
                         
 
                 broadcast_lobby()
@@ -341,16 +346,20 @@ def handle_connection(conn, addr, lobby_id):
         
 
         # removing players from the lobby
+        print("REMOVING")
         for lid, waiter in list(waiters.items()):
             if waiter is conn:
                 with lock:
                     del waiters[lid]
                     del lobby[lid]
                 break
-                
-        # need to broadcast lobby one more time when you are last player to join the game
+        
+        # need to broadcast lobby because waiters are leaving the lobby
         broadcast_lobby()
 
+        if not connected:
+            break
+                
         handle_client(conn, addr, player_id, game_id)
 
         print("out of client")
@@ -366,9 +375,15 @@ def handle_connection(conn, addr, lobby_id):
                 lobby[new_lobby_id]  = [addr, -1, username]
                 continue
             
-        
+        # if games[game_id][player_id % 2]["location"] == "disconnected":
+
+
         # disconnected
         break
+    # conn.close()
+    # with lock:
+    #     del waiters[lobby_id]
+    #     del lobby[lobby_id]
 
 
 def produce_game_id() -> int:
